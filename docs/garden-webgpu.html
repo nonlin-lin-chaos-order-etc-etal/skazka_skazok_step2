@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Abstract Garden - WebGPU Scene</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+        }
+        canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="webgpu-canvas"></canvas>
+    <script type="module">
+        // Check if WebGPU is supported
+        if (!navigator.gpu) {
+            document.body.innerHTML = '<h1>WebGPU is not supported in your browser</h1>';
+            throw new Error('WebGPU not supported');
+        }
+
+        const canvas = document.getElementById('webgpu-canvas');
+        const adapter = await navigator.gpu.requestAdapter();
+        if (!adapter) {
+            document.body.innerHTML = '<h1>No appropriate GPU adapter found</h1>';
+            throw new Error('No GPU adapter found');
+        }
+        
+        const device = await adapter.requestDevice();
+        const context = canvas.getContext('webgpu');
+        
+        // Configure the swap chain
+        const devicePixelRatio = window.devicePixelRatio || 1;
+        const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
+        
+        canvas.width = canvas.clientWidth * devicePixelRatio;
+        canvas.height = canvas.clientHeight * devicePixelRatio;
+        
+        context.configure({
+            device,
+            format: presentationFormat,
+            alphaMode: 'premultiplied',
+        });
+
+        // Create a shader module for our 3D scene
+        const shaderModule = device.createShaderModule({
+            label: "Main shader",
+            code: `
+                struct Uniforms {
+                    modelViewProjectionMatrix: mat4x4<f32>,
+                    time: f32,
+                };
+                
+                @group(0) @binding(0) var<uniform> uniforms: Uniforms;
+                
+                struct VertexInput {
+                    @location(0) position: vec3<f32>,
+                    @location(1) color: vec3<f32>,
+                    @location(2) normal: vec3<f32>,
+                    @location(3) instancePos: vec3<f32>,
+                    @location(4) instanceColor: vec3<f32>,
+                    @location(5) instanceType: f32,
+                    @location(6) instanceScale: vec3<f32>,
+                };
+                
+                struct VertexOutput {
+                    @builtin(position) position: vec4<f32>,
+                    @location(0) color: vec3<f32>,
+                    @location(1) normal: vec3<f32>,
+                };
+                
+                @vertex
+                fn vertexMain(input: VertexInput) -> VertexOutput {
+                    var output: VertexOutput;
+                    
+                    // Apply instance transformations
+                    var pos = input.position * input.instanceScale;
+                    
+                    // Apply different transformations based on instance type
+                    if (input.instanceType > 0.5 && input.instanceType < 1.5) {
+                        // Flower type 1 - petals that wave
+                        pos = pos + vec3<f32>(sin(uniforms.time + input.instancePos.x) * 0.1, 
+                                            cos(uniforms.time * 0.7 + input.instancePos.z) * 0.1, 
+                                            0.0);
+                    } else if (input.instanceType > 1.5 && input.instanceType < 2.5) {
+                        // Flower type 2 - rotate
+                        let angle = uniforms.time * 0.3 + input.instancePos.x * 2.0;
+                        let c = cos(angle);
+                        let s = sin(angle);
+                        let rotatedX = pos.x * c - pos.z * s;
+                        let rotatedZ = pos.x * s + pos.z * c;
+                        pos = vec3<f32>(rotatedX, pos.y, rotatedZ);
+                    } else if (input.instanceType > 2.5) {
+                        // Tall grass/leaves that sway
+                        pos = pos + vec3<f32>(sin(uniforms.time * 0.5 + input.instancePos.z) * pos.y * 0.2, 
+                                            0.0, 
+                                            cos(uniforms.time * 0.3 + input.instancePos.x) * pos.y * 0.1);
+                    }
+                    
+                    pos = pos + input.instancePos;
+                    
+                    output.position = uniforms.modelViewProjectionMatrix * vec4<f32>(pos, 1.0);
+                    output.color = input.color * input.instanceColor;
+                    
+                    // Simple normal calculation (in world space)
+                    output.normal = input.normal;
+                    
+                    return output;
+                }
+                
+                @fragment
+                fn fragmentMain(input: VertexOutput) -> @location(0) vec4<f32> {
+                    // Simple lighting
+                    let lightDir = normalize(vec3<f32>(0.5, 1.0, 0.3));
+                    let diffuse = max(dot(input.normal, lightDir), 0.0);
+                    let ambient = 0.3;
+                    let lighting = ambient + diffuse * 0.7;
+                    
+                    // Final color with lighting applied
+                    return vec4<f32>(input.color * lighting, 1.0);
+                }
+            `
+        });
+
+        // Create shapes for our scene
+        
+        // Simple petal shape for flowers
+        function createPetal() {
+            const positions = [];
+            const normals = [];
+            const colors = [];
+            const indices = [];
+            
+            // Base shape is like an elongated diamond
+            const petalPoints = [
+                [0, 0, 0],        // Base
+                [0.3, 0.1, 0],    // Side 1
+                [0.5, 0.8, 0],    // Tip
+                [-0.3, 0.1, 0],   // Side 2
+            ];
+            
+            // Make 3D by adding depth
+            for (let z = -0.05; z <= 0.05; z += 0.1) {
+                for (const [x, y, _] of petalPoints) {
+                    positions.push(x, y, z);
+                    normals.push(0, 0, z > 0 ? 1 : -1);
+                    colors.push(1, 0.7, 0.8); // Base color (will be multiplied by instance color)
+                }
+            }
+            
+            // Connect vertices to form triangles
+            const numPointsPerSide = petalPoints.length;
+            
+            // Front face
+            for (let i = 0; i < numPointsPerSide - 2; i++) {
+                indices.push(0, i + 1, i + 2);
+            }
+            
+            // Back face
+            for (let i = 0; i < numPointsPerSide - 2; i++) {
+                indices.push(numPointsPerSide + 0, numPointsPerSide + i + 2, numPointsPerSide + i + 1);
+            }
+            
+            // Connect sides
+            for (let i = 0; i < numPointsPerSide; i++) {
+                const nextI = (i + 1) % numPointsPerSide;
+                indices.push(i, i + numPointsPerSide, nextI);
+                indices.push(nextI, i + numPointsPerSide, nextI + numPointsPerSide);
+            }
+            
+            return { positions, normals, colors, indices };
+        }
+        
+        // Create a leaf shape for tall plants
+        function createLeaf() {
+            const positions = [];
+            const normals = [];
+            const colors = [];
+            const indices = [];
+            
+            // Base shape is a pointed oval
+            const leafPoints = [];
+            const segments = 10;
+            
+            for (let i = 0; i <= segments; i++) {
+                const t = i / segments;
+                // Parametric equation for a leaf-like shape
+                const x = 0.3 * Math.sin(Math.PI * t);
+                const y = t * 1.5;
+                leafPoints.push([x, y, 0]);
+            }
+            
+            // Make 3D by adding depth
+            for (let z = -0.03; z <= 0.03; z += 0.06) {
+                for (const [x, y, _] of leafPoints) {
+                    positions.push(x, y, z);
+                    normals.push(0, 0, z > 0 ? 1 : -1);
+                    colors.push(0.4, 0.9, 0.3); // Base color (will be multiplied by instance color)
+                }
+            }
+            
+            // Connect vertices to form triangles
+            const numPointsPerSide = leafPoints.length;
+            
+            // Connect sides to form triangles
+            for (let i = 0; i < numPointsPerSide - 1; i++) {
+                // Front face
+                indices.push(i, i + 1, numPointsPerSide + i);
+                indices.push(numPointsPerSide + i, i + 1, numPointsPerSide + i + 1);
+                
+                // Add side edges 
+                const normalX = leafPoints[i][0] > 0 ? 1 : -1;
+                normals[i * 3] = normalX;
+                normals[i * 3 + numPointsPerSide * 3] = normalX;
+            }
+            
+            return { positions, normals, colors, indices };
+        }
+
+        // Create a simple sphere for flower centers
+        function createSphere(radius = 1, segments = 12) {
+            const positions = [];
+            const normals = [];
+            const colors = [];
+            const indices = [];
+            
+            // Generate the vertices
+            for (let lat = 0; lat <= segments; lat++) {
+                const theta = lat * Math.PI / segments;
+                const sinTheta = Math.sin(theta);
+                const cosTheta = Math.cos(theta);
+                
+                for (let lon = 0; lon <= segments; lon++) {
+                    const phi = lon * 2 * Math.PI / segments;
+                    const sinPhi = Math.sin(phi);
+                    const cosPhi = Math.cos(phi);
+                    
+                    const x = cosPhi * sinTheta;
+                    const y = cosTheta;
+                    const z = sinPhi * sinTheta;
+                    
+                    positions.push(radius * x, radius * y, radius * z);
+                    normals.push(x, y, z);
+                    colors.push(0.9, 0.5, 0.2); // Base color
+                }
+            }
+            
+            // Generate the indices
+            for (let lat = 0; lat < segments; lat++) {
+                for (let lon = 0; lon < segments; lon++) {
+                    const first = (lat * (segments + 1)) + lon;
+                    const second = first + segments + 1;
+                    
+                    indices.push(first, second, first + 1);
+                    indices.push(second, second + 1, first + 1);
+                }
+            }
+            
+            return { positions, normals, colors, indices };
+        }
+
+        // Create geometry data
+        const petalData = createPetal();
+        const leafData = createLeaf();
+        const sphereData = createSphere(0.2, 8);
+
+        // Create the appropriate buffers for each model
+        function createModelBuffers(modelData) {
+            const vertexBuffer = device.createBuffer({
+                size: Float32Array.BYTES_PER_ELEMENT * (
+                    modelData.positions.length + 
+                    modelData.colors.length + 
+                    modelData.normals.length
+                ),
+                usage: GPUBufferUsage.VERTEX,
+                mappedAtCreation: true,
+            });
+            
+            const vertexData = new Float32Array(vertexBuffer.getMappedRange());
+            
+            // Interleave position, color, and normal data
+            let offset = 0;
+            for (let i = 0; i < modelData.positions.length / 3; i++) {
+                // Position
+                vertexData[offset++] = modelData.positions[i * 3];
+                vertexData[offset++] = modelData.positions[i * 3 + 1]; 
+                vertexData[offset++] = modelData.positions[i * 3 + 2];
+                
+                // Color
+                vertexData[offset++] = modelData.colors[i * 3];
+                vertexData[offset++] = modelData.colors[i * 3 + 1];
+                vertexData[offset++] = modelData.colors[i * 3 + 2];
+                
+                // Normal
+                vertexData[offset++] = modelData.normals[i * 3];
+                vertexData[offset++] = modelData.normals[i * 3 + 1];
+                vertexData[offset++] = modelData.normals[i * 3 + 2];
+            }
+            
+            vertexBuffer.unmap();
+            
+            const indexBuffer = device.createBuffer({
+                size: Uint16Array.BYTES_PER_ELEMENT * modelData.indices.length,
+                usage: GPUBufferUsage.INDEX,
+                mappedAtCreation: true,
+            });
+            
+            const indexData = new Uint16Array(indexBuffer.getMappedRange());
+            indexData.set(modelData.indices);
+            indexBuffer.unmap();
+            
+            return {
+                vertexBuffer,
+                indexBuffer,
+                indexCount: modelData.indices.length,
+            };
+        }
+        
+        const petalBuffers = createModelBuffers(petalData);
+        const leafBuffers = createModelBuffers(leafData);
+        const sphereBuffers = createModelBuffers(sphereData);
+
+        // Create instance data for our flowers, plants, etc.
+        const MAX_INSTANCES = 300;
+
+        // Instance data layout: position(3), color(3), type(1), scale(3)
+        const instanceData = new Float32Array(MAX_INSTANCES * 10);
+        
+        // Helper to create different types of plants
+        function createPlantInstances() {
+            let idx = 0;
+            
+            // Create a ground plane with yellow color as in the painting
+            for (let x = -10; x <= 10; x += 1) {
+                for (let z = -10; z <= 10; z += 1) {
+                    instanceData[idx++] = x * 0.5;           // position x
+                    instanceData[idx++] = -0.5;              // position y (ground level)
+                    instanceData[idx++] = z * 0.5;           // position z
+                    instanceData[idx++] = 0.9;               // color r (yellow)
+                    instanceData[idx++] = 0.8;               // color g
+                    instanceData[idx++] = 0.2;               // color b
+                    instanceData[idx++] = 0;                 // type (0 = ground)
+                    instanceData[idx++] = 10;                // scale x
+                    instanceData[idx++] = 0.1;               // scale y
+                    instanceData[idx++] = 10;                // scale z
+                }
+            }
+            
+            // Create flower clumps
+            const flowers = 50;
+            for (let i = 0; i < flowers; i++) {
+                // Cluster flowers in groups
+                const groupX = (Math.random() - 0.5) * 6;
+                const groupZ = (Math.random() - 0.5) * 6;
+                
+                // Each group has multiple petals and a center
+                const petals = 5 + Math.floor(Math.random() * 7);
+                const radius = 0.1 + Math.random() * 0.2;
+                const height = 0.1 + Math.random() * 1.0;
+                
+                // Random color for this flower
+                let r, g, b;
+                const colorType = Math.random();
+                if (colorType < 0.3) {
+                    // Red/orange flower
+                    r = 0.8 + Math.random() * 0.2;
+                    g = 0.2 + Math.random() * 0.3;
+                    b = 0.1 + Math.random() * 0.2;
+                } else if (colorType < 0.6) {
+                    // Pink/purple flower
+                    r = 0.6 + Math.random() * 0.4;
+                    g = 0.1 + Math.random() * 0.3;
+                    b = 0.5 + Math.random() * 0.5;
+                } else if (colorType < 0.8) {
+                    // Yellow/orange flower
+                    r = 0.8 + Math.random() * 0.2;
+                    g = 0.6 + Math.random() * 0.4;
+                    b = 0.1 + Math.random() * 0.2;
+                } else {
+                    // White/light blue flower
+                    r = 0.8 + Math.random() * 0.2;
+                    g = 0.8 + Math.random() * 0.2;
+                    b = 0.9 + Math.random() * 0.1;
+                }
+                
+                // Center of flower
+                instanceData[idx++] = groupX;                    // position x
+                instanceData[idx++] = height;                    // position y
+                instanceData[idx++] = groupZ;                    // position z
+                instanceData[idx++] = r * 0.8;                   // color r
+                instanceData[idx++] = g * 0.8;                   // color g
+                instanceData[idx++] = b * 0.8;                   // color b
+                instanceData[idx++] = 1;                         // type (1 = flower center)
+                instanceData[idx++] = radius * 1.5;              // scale x
+                instanceData[idx++] = radius * 1.5;              // scale y
+                instanceData[idx++] = radius * 1.5;              // scale z
+                
+                // Create petals around center
+                for (let p = 0; p < petals; p++) {
+                    const angle = (p / petals) * Math.PI * 2;
+                    const petalX = groupX + Math.cos(angle) * radius;
+                    const petalZ = groupZ + Math.sin(angle) * radius;
+                    const petalH = height + 0.05 + Math.random() * 0.1;
+                    
+                    // Add petal
+                    instanceData[idx++] = petalX;                // position x
+                    instanceData[idx++] = petalH;                // position y
+                    instanceData[idx++] = petalZ;                // position z
+                    instanceData[idx++] = r;                     // color r
+                    instanceData[idx++] = g;                     // color g
+                    instanceData[idx++] = b;                     // color b
+                    instanceData[idx++] = 2;                     // type (2 = petal)
+                    
+                    // Calculate rotation to face center
+                    const scale = 0.2 + Math.random() * 0.3;
+                    instanceData[idx++] = scale;                 // scale x
+                    instanceData[idx++] = scale;                 // scale y
+                    instanceData[idx++] = scale;                 // scale z
+                }
+            }
+            
+            // Create tall leaves/grass
+            const leaves = 100;
+            for (let i = 0; i < leaves; i++) {
+                // Random position
+                const x = (Math.random() - 0.5) * 8;
+                const z = (Math.random() - 0.5) * 8;
+                const height = 0.0 + Math.random() * 0.3;
+                
+                // Random green shade
+                const greenIntensity = 0.7 + Math.random() * 0.3;
+                let r, g, b;
+                
+                if (Math.random() < 0.7) {
+                    // Green leaves
+                    r = 0.1 + Math.random() * 0.3;
+                    g = 0.5 + Math.random() * 0.5;
+                    b = 0.1 + Math.random() * 0.2;
+                } else {
+                    // Other colored leaves/plants
+                    r = 0.4 + Math.random() * 0.6;
+                    g = 0.3 + Math.random() * 0.4;
+                    b = 0.1 + Math.random() * 0.3;
+                }
+                
+                // Scale and height determine the type of plant
+                const scaleY = 0.8 + Math.random() * 1.2;
+                const scaleX = 0.1 + Math.random() * 0.3;
+                
+                instanceData[idx++] = x;                         // position x
+                instanceData[idx++] = height;                    // position y
+                instanceData[idx++] = z;                         // position z
+                instanceData[idx++] = r;                         // color r
+                instanceData[idx++] = g;                         // color g
+                instanceData[idx++] = b;                         // color b
+                instanceData[idx++] = 3;                         // type (3 = leaf/grass)
+                instanceData[idx++] = scaleX;                    // scale x
+                instanceData[idx++] = scaleY;                    // scale y
+                instanceData[idx++] = scaleX;                    // scale z
+            }
+            
+            return idx / 10; // Return number of instances created
+        }
+        
+        const numInstances = createPlantInstances();
+        
+        // Create instance buffer
+        const instanceBuffer = device.createBuffer({
+            size: instanceData.byteLength,
+            usage: GPUBufferUsage.VERTEX,
+            mappedAtCreation: true,
+        });
+        
+        new Float32Array(instanceBuffer.getMappedRange()).set(instanceData);
+        instanceBuffer.unmap();
+
+        // Create a uniform buffer for our transform matrices and time
+        const uniformBufferSize = 4 * 16 + 4; // mat4x4 + float
+        const uniformBuffer = device.createBuffer({
+            size: uniformBufferSize,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        });
+        
+        // Create a bind group layout and pipeline layout
+        const bindGroupLayout = device.createBindGroupLayout({
+            entries: [
+                {
+                    binding: 0,
+                    visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+                    buffer: {},
+                },
+            ],
+        });
+        
+        const pipelineLayout = device.createPipelineLayout({
+            bindGroupLayouts: [bindGroupLayout],
+        });
+        
+        // Create a bind group
+        const bindGroup = device.createBindGroup({
+            layout: bindGroupLayout,
+            entries: [
+                {
+                    binding: 0,
+                    resource: {
+                        buffer: uniformBuffer,
+                    },
+                },
+            ],
+        });
+        
+        // Vertex buffer layouts
+        const vertexBufferLayout = {
+            arrayStride: 9 * 4, // Position (3) + Color (3) + Normal (3) = 9 floats
+            attributes: [
+                {
+                    // Position
+                    shaderLocation: 0,
+                    offset: 0,
+                    format: 'float32x3',
+                },
+                {
+                    // Color
+                    shaderLocation: 1,
+                    offset: 3 * 4,
+                    format: 'float32x3',
+                },
+                {
+                    // Normal
+                    shaderLocation: 2,
+                    offset: 6 * 4,
+                    format: 'float32x3',
+                },
+            ],
+        };
+        
+        const instanceBufferLayout = {
+            arrayStride: 10 * 4, // Position (3) + Color (3) + Type (1) + Scale (3) = 10 floats
+            stepMode: 'instance',
+            attributes: [
+                {
+                    // Instance position
+                    shaderLocation: 3,
+                    offset: 0,
+                    format: 'float32x3',
+                },
+                {
+                    // Instance color
+                    shaderLocation: 4,
+                    offset: 3 * 4,
+                    format: 'float32x3',
+                },
+                {
+                    // Instance type
+                    shaderLocation: 5,
+                    offset: 6 * 4,
+                    format: 'float32',
+                },
+                {
+                    // Instance scale
+                    shaderLocation: 6,
+                    offset: 7 * 4,
+                    format: 'float32x3',
+                },
+            ],
+        };
+        
+        // Create render pipeline
+        const pipeline = device.createRenderPipeline({
+            layout: pipelineLayout,
+            vertex: {
+                module: shaderModule,
+                entryPoint: 'vertexMain',
+                buffers: [vertexBufferLayout, instanceBufferLayout],
+            },
+            fragment: {
+                module: shaderModule,
+                entryPoint: 'fragmentMain',
+                targets: [
+                    {
+                        format: presentationFormat,
+                    },
+                ],
+            },
+            primitive: {
+                topology: 'triangle-list',
+                cullMode: 'back',
+            },
+            depthStencil: {
+                depthWriteEnabled: true,
+                depthCompare: 'less',
+                format: 'depth24plus',
+            },
+        });
+        
+        // Create depth texture
+        let depthTexture = device.createTexture({
+            size: [canvas.width, canvas.height],
+            format: 'depth24plus',
+            usage: GPUTextureUsage.RENDER_ATTACHMENT,
+        });
+        
+        // Matrix helper functions
+        function createProjectionMatrix(aspectRatio) {
+            const fieldOfView = (60 * Math.PI) / 180;
+            const near = 0.1;
+            const far = 100.0;
+            
+            const f = 1.0 / Math.tan(fieldOfView / 2);
+            
+            return [
+                f / aspectRatio, 0, 0, 0,
+                0, f, 0, 0,
+                0, 0, (far + near) / (near - far), -1,
+                0, 0, (2 * far * near) / (near - far), 0,
+            ];
+        }
+        
+        function createViewMatrix(cameraPosition, target, up) {
+            const zAxis = normalizeVector(subtractVectors(cameraPosition, target));
+            const xAxis = normalizeVector(crossProduct(up, zAxis));
+            const yAxis = crossProduct(zAxis, xAxis);
+            
+            return [
+                xAxis[0], yAxis[0], zAxis[0], 0,
+                xAxis[1], yAxis[1], zAxis[1], 0,
+                xAxis[2], yAxis[2], zAxis[2], 0,
+                -dotProduct(xAxis, cameraPosition),
+                -dotProduct(yAxis, cameraPosition),
+                -dotProduct(zAxis, cameraPosition),
+                1,
+            ];
+        }
+        
+        function subtractVectors(a, b) {
+            return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+        }
+        
+        function crossProduct(a, b) {
+            return [
+                a[1] * b[2] - a[2] * b[1],
+                a[2] * b[0] - a[0] * b[2],
+                a[0] * b[1] - a[1] * b[0],
+            ];
+        }
+        
+        function dotProduct(a, b) {
+            return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        }
+        
+        function normalizeVector(v) {
+            const length = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+            return [v[0] / length, v[1] / length, v[2] / length];
+        }
+        
+        function multiplyMatrices(a, b) {
+            const result = [];
+            
+            for (let i = 0; i < 4; i++) {
+                for (let j = 0; j < 4; j++) {
+                    let sum = 0;
+                    for (let k = 0; k < 4; k++) {
+                        sum += a[i * 4 + k] * b[k * 4 + j];
+                    }
+                    result[i * 4 + j] = sum;
+                }
+            }
+            
+            return result;
+        }
+        
+        // Animation and render loop
+        let startTime = Date.now();
+        let then = 0;
+        
+        function animate(now) {
+            now *= 0.001; // Convert to seconds
+            const deltaTime = now - then;
+            then = now;
+            
+            const elapsedTime = (Date.now() - startTime) / 1000;
+            
+            // Handle window resizing
+            if (canvas.width !== canvas.clientWidth * devicePixelRatio || 
+                canvas.height !== canvas.clientHeight * devicePixelRatio) {
+                
+                canvas.width = canvas.clientWidth * devicePixelRatio;
+                canvas.height = canvas.clientHeight * devicePixelRatio;
+                
+                depthTexture.destroy();
+                depthTexture = device.createTexture({
+                    size: [canvas.width, canvas.height],
+                    format: 'depth24plus',
+                    usage: GPUTextureUsage.RENDER_ATTACHMENT,
+                });
+            }
+            
+            // Calculate camera position - orbit around scene
+            const cameraX = Math.sin(elapsedTime * 0.2) * 8;
+            const cameraZ = Math.cos(elapsedTime * 0.2) * 8;
+            const cameraPosition = [cameraX, 2.5, cameraZ];
+            const target = [0, 0, 0];
+            const up = [0, 1, 0];
+            
+            // Update uniform buffer with new transform matrix and time
+            const aspect = canvas.width / canvas.height;
+            const projectionMatrix = createProjectionMatrix(aspect);
+            const viewMatrix = createViewMatrix(cameraPosition, target, up);
+            const mvpMatrix = multiplyMatrices(projectionMatrix, viewMatrix);
+            
+            // Copy the MVP matrix and time to the uniform buffer
+            device.queue.writeBuffer(uniformBuffer, 0, new Float32Array(mvpMatrix));
+            device.queue.writeBuffer(uniformBuffer, 64, new Float32Array([elapsedTime]));
+            
+            // Begin rendering
+            const commandEncoder = device.createCommandEncoder();
+            
+            const renderPassDescriptor = {
+                colorAttachments: [
+                    {
+                        view: context.getCurrentTexture().createView(),
+                        clearValue: { r: 0.05, g: 0.05, b: 0.15, a: 1.0 }, // Dark blue-black background
+                        loadOp: 'clear',
+                        storeOp: 'store',
+                    },
+                ],
+                depthStencilAttachment: {
+                    view: depthTexture.createView(),
+                    depthClearValue: 1.0,
+                    depthLoadOp: 'clear',
+                    depthStoreOp: 'store',
+                },
+            };
+            
+            const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
+            passEncoder.setPipeline(pipeline);
+            passEncoder.setBindGroup(0, bindGroup);
+            
+            // Render ground planes (sphere instances of type 0)
+            passEncoder.setVertexBuffer(0, sphereBuffers.vertexBuffer);
+            passEncoder.setVertexBuffer(1, instanceBuffer);
+            passEncoder.setIndexBuffer(sphereBuffers.indexBuffer, 'uint16');
+            passEncoder.drawIndexed(sphereBuffers.indexCount, numInstances);
+            
+            // Render petals (instances of type 2)
+            passEncoder.setVertexBuffer(0, petalBuffers.vertexBuffer);
+            passEncoder.setIndexBuffer(petalBuffers.indexBuffer, 'uint16');
+            passEncoder.drawIndexed(petalBuffers.indexCount, numInstances);
+            
+            // Render flower centers (sphere instances of type 1)
+            passEncoder.setVertexBuffer(0, sphereBuffers.vertexBuffer);
+            passEncoder.setIndexBuffer(sphereBuffers.indexBuffer, 'uint16');
+            passEncoder.drawIndexed(sphereBuffers.indexCount, numInstances);
+            
+            // Render leaves (instances of type 3)
+            passEncoder.setVertexBuffer(0, leafBuffers.vertexBuffer);
+            passEncoder.setIndexBuffer(leafBuffers.indexBuffer, 'uint16');
+            passEncoder.drawIndexed(leafBuffers.indexCount, numInstances);
+            
+            passEncoder.end();
+            
+            device.queue.submit([commandEncoder.finish()]);
+            
+            requestAnimationFrame(animate);
+        }
+        
+        requestAnimationFrame(animate);
+    </script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+site_name: Сказка сказок
+site_url: https://any.surf/
+site_description: Сказка сказок, шаг 2
+site_author: https://any.surf/
+
+repo_url: https://github.com/nonlin-lin-chaos-order-etc-etal/skazka_skazok_step2
+
+nav:
+- Source image by by Brian Wildsmith: index.md
+- 3D Take 1: garden-webgpu.html
+- 3D Take 2: garden-webgl.html
+- 3D Take 3: detailed-webgl.html
+- 3D Take 4: photorealistic-webgl.html
+
+theme: readthedocs
+
+markdown_extensions:
+  - toc:
+      permalink: true
