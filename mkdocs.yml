@@ -6,7 +6,7 @@ site_author: https://any.surf/
 repo_url: https://github.com/nonlin-lin-chaos-order-etc-etal/skazka_skazok_step2
 
 nav:
-- Source image by by Brian Wildsmith: index.md
+- Source image by Brian Wildsmith: index.md
 - 3D Take 1: garden-webgpu.html
 - 3D Take 2: garden-webgl.html
 - 3D Take 3: detailed-webgl.html
