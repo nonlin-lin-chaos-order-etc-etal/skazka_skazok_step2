@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Abstract Garden 3D Scene</title>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        canvas { display: block; }
+        #loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: black;
+            color: white;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: Arial, sans-serif;
+            font-size: 24px;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading">Loading 3D Scene... (This may take a moment)</div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.min.js"></script>
+    <script>
+        // Main scene setup
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 3, 8);
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.2;
+        renderer.outputEncoding = THREE.sRGBEncoding;
+        document.body.appendChild(renderer.domElement);
+        
+        // Controls
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.minDistance = 3;
+        controls.maxDistance = 15;
+        controls.maxPolarAngle = Math.PI / 2;
+        
+        // Lighting setup
+        // Main directional light (mimicking the yellow light from top left)
+        const directionalLight = new THREE.DirectionalLight(0xffffaa, 1.2);
+        directionalLight.position.set(-5, 10, 5);
+        directionalLight.castShadow = true;
+        directionalLight.shadow.mapSize.width = 2048;
+        directionalLight.shadow.mapSize.height = 2048;
+        directionalLight.shadow.camera.near = 0.5;
+        directionalLight.shadow.camera.far = 50;
+        directionalLight.shadow.camera.left = -10;
+        directionalLight.shadow.camera.right = 10;
+        directionalLight.shadow.camera.top = 10;
+        directionalLight.shadow.camera.bottom = -10;
+        scene.add(directionalLight);
+        
+        // Dark blue ambient light for the top dark area
+        const ambientLight = new THREE.AmbientLight(0x334455, 0.6);
+        scene.add(ambientLight);
+        
+        // Extra fill light
+        const fillLight = new THREE.PointLight(0xffaa77, 0.8);
+        fillLight.position.set(5, 2, 5);
+        scene.add(fillLight);
+        
+        // Background with gradient matching the painting
+        const vertexShader = `
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `;
+        
+        const fragmentShader = `
+            varying vec2 vUv;
+            void main() {
+                // Dark blue/black top to yellow bottom gradient
+                vec3 topColor = vec3(0.1, 0.1, 0.2); // Dark blue/black
+                vec3 bottomColor = vec3(0.95, 0.85, 0.2); // Yellow/gold
+                vec3 color = mix(bottomColor, topColor, vUv.y);
+                gl_FragColor = vec4(color, 1.0);
+            }
+        `;
+        
+        const bgGeometry = new THREE.PlaneGeometry(30, 20);
+        const bgMaterial = new THREE.ShaderMaterial({
+            vertexShader,
+            fragmentShader,
+            side: THREE.DoubleSide
+        });
+        const background = new THREE.Mesh(bgGeometry, bgMaterial);
+        background.position.z = -5;
+        scene.add(background);
+        
+        // Ground plane (yellow base)
+        const groundGeometry = new THREE.PlaneGeometry(20, 20);
+        const groundMaterial = new THREE.MeshStandardMaterial({ 
+            color: 0xffee44,
+            roughness: 0.6,
+            metalness: 0.2,
+            side: THREE.DoubleSide
+        });
+        const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+        ground.rotation.x = -Math.PI / 2;
+        ground.position.y = -1;
+        ground.receiveShadow = true;
+        scene.add(ground);
+        
+        // Function to create a stylized flower
+        function createFlower(position, color, scale, numPetals, heightVariation) {
+            const flowerGroup = new THREE.Group();
+            
+            // Stem
+            const stemGeometry = new THREE.CylinderGeometry(0.05 * scale, 0.03 * scale, 2 * scale, 8);
+            const stemMaterial = new THREE.MeshStandardMaterial({ 
+                color: 0x339944, 
+                roughness: 0.8 
+            });
+            const stem = new THREE.Mesh(stemGeometry, stemMaterial);
+            stem.castShadow = true;
+            stem.position.y = scale * 0.9;
+            flowerGroup.add(stem);
+            
+            // Petals
+            for (let i = 0; i < numPetals; i++) {
+                const angle = (i / numPetals) * Math.PI * 2;
+                const petalGeometry = new THREE.ConeGeometry(
+                    0.2 * scale, 
+                    1 * scale, 
+                    3, 
+                    1, 
+                    false
+                );
+                const petalMaterial = new THREE.MeshStandardMaterial({ 
+                    color: color,
+                    roughness: 0.6,
+                    metalness: 0.1,
+                    side: THREE.DoubleSide
+                });
+                const petal = new THREE.Mesh(petalGeometry, petalMaterial);
+                
+                // Position and rotate the petal
+                const petalDistance = 0.15 * scale;
+                petal.position.set(
+                    Math.cos(angle) * petalDistance,
+                    scale * 1.8 + (Math.random() * heightVariation * scale),
+                    Math.sin(angle) * petalDistance
+                );
+                petal.rotation.x = Math.PI / 2;
+                petal.rotation.z = -angle;
+                petal.rotation.y = Math.random() * 0.5;
+                petal.castShadow = true;
+                flowerGroup.add(petal);
+            }
+            
+            // Flower center
+            const centerGeometry = new THREE.SphereGeometry(0.2 * scale, 16, 16);
+            const centerMaterial = new THREE.MeshStandardMaterial({
+                color: 0x995500,
+                roughness: 0.7
+            });
+            const center = new THREE.Mesh(centerGeometry, centerMaterial);
+            center.position.y = scale * 1.8;
+            center.castShadow = true;
+            flowerGroup.add(center);
+            
+            flowerGroup.position.set(position.x, position.y, position.z);
+            return flowerGroup;
+        }
+        
+        // Function to create stylized leaf
+        function createLeaf(position, rotation, scale, color) {
+            const shape = new THREE.Shape();
+            shape.moveTo(0, 0);
+            shape.bezierCurveTo(1, 2, 2, 3, 0, 4);
+            shape.bezierCurveTo(-2, 3, -1, 2, 0, 0);
+            
+            const extrudeSettings = {
+                steps: 1,
+                depth: 0.1,
+                bevelEnabled: true,
+                bevelThickness: 0.05,
+                bevelSize: 0.05,
+                bevelOffset: 0,
+                bevelSegments: 3
+            };
+            
+            const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+            geometry.scale(scale * 0.5, scale * 0.5, scale * 0.5);
+            
+            // Create patterns on the leaf
+            const leafTexture = createLeafPatternTexture(color);
+            
+            const material = new THREE.MeshStandardMaterial({
+                color: color,
+                map: leafTexture,
+                roughness: 0.8,
+                metalness: 0.1,
+                side: THREE.DoubleSide
+            });
+            
+            const leaf = new THREE.Mesh(geometry, material);
+            leaf.castShadow = true;
+            leaf.position.set(position.x, position.y, position.z);
+            leaf.rotation.set(rotation.x, rotation.y, rotation.z);
+            
+            return leaf;
+        }
+        
+        // Function to create a procedural leaf texture
+        function createLeafPatternTexture(baseColor) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 256;
+            canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            
+            // Base color
+            ctx.fillStyle = '#' + new THREE.Color(baseColor).getHexString();
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Veins pattern
+            ctx.strokeStyle = '#' + new THREE.Color(baseColor).multiplyScalar(0.7).getHexString();
+            ctx.lineWidth = 2;
+            
+            // Main vein
+            ctx.beginPath();
+            ctx.moveTo(128, 0);
+            ctx.lineTo(128, 256);
+            ctx.stroke();
+            
+            // Side veins
+            for (let i = 20; i < 240; i += 20) {
+                ctx.beginPath();
+                ctx.moveTo(128, i);
+                ctx.quadraticCurveTo(96, i + 10, 20, i + 5);
+                ctx.stroke();
+                
+                ctx.beginPath();
+                ctx.moveTo(128, i);
+                ctx.quadraticCurveTo(160, i + 10, 236, i + 5);
+                ctx.stroke();
+            }
+            
+            // Add some dots/patterns to mimic the painting's style
+            ctx.fillStyle = '#' + new THREE.Color(baseColor).multiplyScalar(0.8).getHexString();
+            for (let i = 0; i < 50; i++) {
+                const x = Math.random() * canvas.width;
+                const y = Math.random() * canvas.height;
+                const radius = 2 + Math.random() * 4;
+                ctx.beginPath();
+                ctx.arc(x, y, radius, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.wrapS = THREE.RepeatWrapping;
+            texture.wrapT = THREE.RepeatWrapping;
+            return texture;
+        }
+        
+        // Function to create exotic plant shapes
+        function createExoticPlant(position, scale, colors) {
+            const plantGroup = new THREE.Group();
+            
+            // Main stem
+            const stemGeometry = new THREE.CylinderGeometry(
+                0.08 * scale, 
+                0.12 * scale, 
+                3 * scale, 
+                8
+            );
+            const stemMaterial = new THREE.MeshStandardMaterial({
+                color: 0x556644,
+                roughness: 0.9
+            });
+            const stem = new THREE.Mesh(stemGeometry, stemMaterial);
+            stem.position.y = 1.5 * scale;
+            stem.castShadow = true;
+            plantGroup.add(stem);
+            
+            // Add exotic leaf shapes
+            const leafCount = 5 + Math.floor(Math.random() * 5);
+            for (let i = 0; i < leafCount; i++) {
+                const angle = (i / leafCount) * Math.PI * 2;
+                const heightFactor = 0.2 + (i / leafCount) * 0.8;
+                
+                const leafPos = new THREE.Vector3(
+                    Math.cos(angle) * 0.3 * scale,
+                    heightFactor * 3 * scale,
+                    Math.sin(angle) * 0.3 * scale
+                );
+                
+                const leafRotation = new THREE.Vector3(
+                    Math.random() * Math.PI * 0.5,
+                    angle + Math.PI * 0.5,
+                    Math.PI * 0.5 + (Math.random() - 0.5) * 0.3
+                );
+                
+                const leafColor = colors[Math.floor(Math.random() * colors.length)];
+                const leafScale = 0.5 + Math.random() * 0.8;
+                
+                const leaf = createLeaf(leafPos, leafRotation, scale * leafScale, leafColor);
+                plantGroup.add(leaf);
+            }
+            
+            // Add some details like spots or small flowers
+            for (let i = 0; i < 10; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const height = (0.2 + Math.random() * 0.8) * 3 * scale;
+                const radius = 0.1 + Math.random() * 0.2;
+                
+                const spotGeometry = new THREE.SphereGeometry(radius * scale, 8, 8);
+                const spotMaterial = new THREE.MeshStandardMaterial({
+                    color: colors[Math.floor(Math.random() * colors.length)],
+                    roughness: 0.7
+                });
+                const spot = new THREE.Mesh(spotGeometry, spotMaterial);
+                
+                spot.position.set(
+                    Math.cos(angle) * 0.4 * scale,
+                    height,
+                    Math.sin(angle) * 0.4 * scale
+                );
+                spot.castShadow = true;
+                plantGroup.add(spot);
+            }
+            
+            plantGroup.position.set(position.x, position.y, position.z);
+            const rotationY = Math.random() * Math.PI * 2;
+            plantGroup.rotation.y = rotationY;
+            
+            return plantGroup;
+        }
+        
+        // Create an array of plants
+        const plants = [];
+        
+        // Create the large lotus/flower in center-right
+        const centerFlower = createFlower(
+            new THREE.Vector3(2, 0, 0), 
+            0xff6644, // Orange-red color
+            2.0,      // Larger scale
+            7,        // Number of petals
+            0.2       // Height variation
+        );
+        scene.add(centerFlower);
+        plants.push(centerFlower);
+        
+        // Create the tall green leaves/plants on the left
+        const leftPlant = createExoticPlant(
+            new THREE.Vector3(-3, 0, 0),
+            1.8,
+            [0x44aa44, 0x227744, 0x55cc66]
+        );
+        scene.add(leftPlant);
+        plants.push(leftPlant);
+        
+        // Create the dark spotted/patterned plant
+        const darkPlant = createExoticPlant(
+            new THREE.Vector3(0, 0, -1),
+            1.5,
+            [0x331111, 0x662211, 0x993322]
+        );
+        scene.add(darkPlant);
+        plants.push(darkPlant);
+        
+        // Create the smaller colorful flowers
+        const flowerPositions = [
+            new THREE.Vector3(-1.5, 0, 1.5),
+            new THREE.Vector3(3, 0, -2),
+            new THREE.Vector3(0, 0, 2.5),
+            new THREE.Vector3(-2.5, 0, -1.5),
+            new THREE.Vector3(1.5, 0, 1)
+        ];
+        
+        const flowerColors = [
+            0xff9944, // Orange
+            0xee3366, // Pink-red
+            0xaa44ff, // Purple
+            0xffcc33, // Yellow
+            0xff5588  // Pink
+        ];
+        
+        for (let i = 0; i < flowerPositions.length; i++) {
+            const petals = 5 + Math.floor(Math.random() * 4);
+            const scale = 0.6 + Math.random() * 0.6;
+            const flower = createFlower(
+                flowerPositions[i],
+                flowerColors[i % flowerColors.length],
+                scale,
+                petals,
+                0.1
+            );
+            scene.add(flower);
+            plants.push(flower);
+        }
+        
+        // Add more varied leaves
+        const leafPositions = [
+            { pos: new THREE.Vector3(3.5, 0, 1), rot: new THREE.Vector3(0, Math.PI/4, Math.PI/2), color: 0x44aa66, scale: 1.2 },
+            { pos: new THREE.Vector3(-3.5, 0, 2), rot: new THREE.Vector3(0, -Math.PI/3, Math.PI/2), color: 0x66cc77, scale: 1.4 },
+            { pos: new THREE.Vector3(2, 0, -3), rot: new THREE.Vector3(0, Math.PI/2, Math.PI/2), color: 0x228844, scale: 1.0 },
+            { pos: new THREE.Vector3(-2, 0, -2.5), rot: new THREE.Vector3(0, -Math.PI/6, Math.PI/2), color: 0x77aa55, scale: 0.9 }
+        ];
+        
+        for (let leaf of leafPositions) {
+            const leafObj = createLeaf(leaf.pos, leaf.rot, leaf.scale, leaf.color);
+            scene.add(leafObj);
+            plants.push(leafObj);
+        }
+        
+        // Create particles for the flying elements in the painting (like birds or spores)
+        const particleCount = 200;
+        const particleGeometry = new THREE.BufferGeometry();
+        const particlePositions = new Float32Array(particleCount * 3);
+        const particleSizes = new Float32Array(particleCount);
+        
+        for (let i = 0; i < particleCount; i++) {
+            // Position particles mainly in the top area (dark blue region)
+            const x = (Math.random() - 0.5) * 15;
+            const y = 2 + Math.random() * 6;
+            const z = (Math.random() - 0.5) * 10;
+            
+            particlePositions[i * 3] = x;
+            particlePositions[i * 3 + 1] = y;
+            particlePositions[i * 3 + 2] = z;
+            
+            particleSizes[i] = 0.05 + Math.random() * 0.1;
+        }
+        
+        particleGeometry.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));
+        particleGeometry.setAttribute('size', new THREE.BufferAttribute(particleSizes, 1));
+        
+        const particleMaterial = new THREE.PointsMaterial({
+            color: 0xbbbbbb,
+            size: 0.1,
+            transparent: true,
+            opacity: 0.7,
+            sizeAttenuation: true
+        });
+        
+        const particles = new THREE.Points(particleGeometry, particleMaterial);
+        scene.add(particles);
+        
+        // Animation variables
+        let time = 0;
+        
+        // Animate function
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            time += 0.01;
+            
+            // Gently sway the plants
+            plants.forEach((plant, index) => {
+                plant.rotation.y = Math.sin(time * 0.5 + index) * 0.05 + plant.rotation.y;
+                plant.position.y = Math.sin(time * 0.3 + index * 0.5) * 0.05;
+            });
+            
+            // Animate particles (bird-like or spore-like movement)
+            const positions = particles.geometry.attributes.position.array;
+            for (let i = 0; i < particleCount; i++) {
+                positions[i * 3] += Math.sin(time + i) * 0.01;
+                positions[i * 3 + 1] += Math.cos(time * 0.5 + i) * 0.005;
+                positions[i * 3 + 2] += Math.sin(time * 0.7 + i) * 0.01;
+                
+                // Reset position if it goes outside bounds
+                if (positions[i * 3 + 1] > 10) positions[i * 3 + 1] = 2;
+            }
+            particles.geometry.attributes.position.needsUpdate = true;
+            
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+        
+        // Remove loading screen when everything is ready
+        window.addEventListener('load', () => {
+            setTimeout(() => {
+                const loadingElement = document.getElementById('loading');
+                loadingElement.style.display = 'none';
+                animate();
+            }, 1000);
+        });
+        
+        // If load event already fired
+        if (document.readyState === 'complete') {
+            setTimeout(() => {
+                const loadingElement = document.getElementById('loading');
+                loadingElement.style.display = 'none';
+                animate();
+            }, 1000);
+        }
+    </script>
+</body>
+</html>

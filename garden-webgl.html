@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Abstract Garden 3D Scene</title>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
+    <script>
+        // Initialize the scene, camera, and renderer
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1a0b2e); // Dark purple/blue background like in the painting
+        
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 5, 15);
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.body.appendChild(renderer.domElement);
+        
+        // Add controls to navigate the scene
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        
+        // Add lights
+        const ambientLight = new THREE.AmbientLight(0x404040, 0.5);
+        scene.add(ambientLight);
+        
+        const spotLight = new THREE.SpotLight(0xffe861, 1); // Yellow spotlight for the yellow area
+        spotLight.position.set(-10, 15, 10);
+        spotLight.castShadow = true;
+        spotLight.angle = Math.PI / 4;
+        scene.add(spotLight);
+        
+        const redLight = new THREE.PointLight(0xff4a4a, 0.8); // Red light for the red flower
+        redLight.position.set(5, 10, 5);
+        scene.add(redLight);
+        
+        // Ground plane (yellow base)
+        const groundGeometry = new THREE.PlaneGeometry(30, 30);
+        const groundMaterial = new THREE.MeshStandardMaterial({ 
+            color: 0xffd700,
+            roughness: 0.8,
+            metalness: 0.2
+        });
+        const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+        ground.rotation.x = -Math.PI / 2;
+        ground.receiveShadow = true;
+        scene.add(ground);
+        
+        // Create tall green plants (left side)
+        function createGreenPlant(x, z, height, color) {
+            const geometry = new THREE.ConeGeometry(0.5, height, 6);
+            const material = new THREE.MeshStandardMaterial({ 
+                color: color,
+                roughness: 0.7,
+                metalness: 0.1
+            });
+            const plant = new THREE.Mesh(geometry, material);
+            plant.position.set(x, height/2, z);
+            plant.castShadow = true;
+            plant.receiveShadow = true;
+            scene.add(plant);
+            return plant;
+        }
+        
+        // Add several green plants of various heights and green shades
+        const greenPlants = [];
+        greenPlants.push(createGreenPlant(-8, 0, 8, 0x21825B)); // Dark green
+        greenPlants.push(createGreenPlant(-7, 2, 7, 0x3BB273)); // Medium green
+        greenPlants.push(createGreenPlant(-9, -1, 9, 0x1E6148)); // Forest green
+        greenPlants.push(createGreenPlant(-6, 1, 6, 0x44CF6C)); // Bright green
+
+        // Create the large red flower (center right)
+        function createRedFlower(x, z) {
+            const group = new THREE.Group();
+            
+            // Flower center
+            const centerGeometry = new THREE.SphereGeometry(0.7, 32, 32);
+            const centerMaterial = new THREE.MeshStandardMaterial({ 
+                color: 0xffa500, // Orange center
+                roughness: 0.6,
+                metalness: 0.2
+            });
+            const center = new THREE.Mesh(centerGeometry, centerMaterial);
+            center.position.y = 4;
+            group.add(center);
+            
+            // Flower petals
+            const petalCount = 8;
+            for (let i = 0; i < petalCount; i++) {
+                const angle = (i / petalCount) * Math.PI * 2;
+                const petalGeometry = new THREE.ConeGeometry(0.4, 3, 8);
+                const petalMaterial = new THREE.MeshStandardMaterial({ 
+                    color: 0xff4a4a, // Red petals
+                    roughness: 0.7,
+                    metalness: 0.1
+                });
+                const petal = new THREE.Mesh(petalGeometry, petalMaterial);
+                
+                // Position and rotate the petal around the center
+                petal.position.set(
+                    2 * Math.cos(angle),
+                    4,
+                    2 * Math.sin(angle)
+                );
+                
+                // Point petals outward from center
+                petal.rotation.x = Math.PI / 2;
+                petal.rotation.z = -angle;
+                
+                petal.castShadow = true;
+                group.add(petal);
+            }
+            
+            // Stem
+            const stemGeometry = new THREE.CylinderGeometry(0.2, 0.2, 4, 8);
+            const stemMaterial = new THREE.MeshStandardMaterial({ 
+                color: 0x2e7d32, // Green stem
+                roughness: 0.8
+            });
+            const stem = new THREE.Mesh(stemGeometry, stemMaterial);
+            stem.position.y = 2;
+            stem.castShadow = true;
+            group.add(stem);
+            
+            group.position.set(x, 0, z);
+            scene.add(group);
+            return group;
+        }
+        
+        const redFlower = createRedFlower(5, 0);
+        
+        // Create smaller decorative flowers
+        function createSmallFlower(x, y, z, color, scale = 1) {
+            const group = new THREE.Group();
+            
+            // Flower center
+            const centerGeometry = new THREE.SphereGeometry(0.3 * scale, 16, 16);
+            const centerMaterial = new THREE.MeshStandardMaterial({ 
+                color: 0xffffff,
+                roughness: 0.6
+            });
+            const center = new THREE.Mesh(centerGeometry, centerMaterial);
+            group.add(center);
+            
+            // Flower petals
+            const petalCount = 5;
+            for (let i = 0; i < petalCount; i++) {
+                const angle = (i / petalCount) * Math.PI * 2;
+                const petalGeometry = new THREE.BoxGeometry(0.6 * scale, 0.1 * scale, 1.2 * scale);
+                const petalMaterial = new THREE.MeshStandardMaterial({ 
+                    color: color,
+                    roughness: 0.7
+                });
+                const petal = new THREE.Mesh(petalGeometry, petalMaterial);
+                
+                petal.position.set(
+                    0.6 * scale * Math.cos(angle),
+                    0,
+                    0.6 * scale * Math.sin(angle)
+                );
+                
+                petal.rotation.y = angle;
+                petal.castShadow = true;
+                group.add(petal);
+            }
+            
+            group.position.set(x, y, z);
+            scene.add(group);
+            return group;
+        }
+        
+        // Create various small flowers around the scene
+        createSmallFlower(2, 0.5, 3, 0x9c27b0, 0.8);  // Purple
+        createSmallFlower(-3, 0.3, 4, 0x1e88e5, 0.6); // Blue
+        createSmallFlower(4, 0.4, -3, 0xf57c00, 0.7); // Orange
+        createSmallFlower(-4, 0.2, -2, 0x7cb342, 0.5); // Light green
+        createSmallFlower(0, 0.3, -4, 0xe91e63, 0.7); // Pink
+        
+        // Create round clustered berries (scattered around)
+        function createBerryCluster(x, y, z, mainColor) {
+            const group = new THREE.Group();
+            const berryCount = 12;
+            
+            for (let i = 0; i < berryCount; i++) {
+                // Random position within cluster
+                const rx = (Math.random() - 0.5) * 1.5;
+                const ry = (Math.random() - 0.5) * 1.5;
+                const rz = (Math.random() - 0.5) * 1.5;
+                
+                // Random size
+                const size = 0.2 + Math.random() * 0.3;
+                
+                // Random color variation
+                const colorHSL = new THREE.Color(mainColor).getHSL({});
+                const hueShift = (Math.random() - 0.5) * 0.1;
+                const newColor = new THREE.Color().setHSL(
+                    colorHSL.h + hueShift,
+                    colorHSL.s,
+                    colorHSL.l
+                );
+                
+                const berryGeometry = new THREE.SphereGeometry(size, 16, 16);
+                const berryMaterial = new THREE.MeshStandardMaterial({ 
+                    color: newColor,
+                    roughness: 0.5,
+                    metalness: 0.2
+                });
+                const berry = new THREE.Mesh(berryGeometry, berryMaterial);
+                berry.position.set(rx, ry, rz);
+                berry.castShadow = true;
+                group.add(berry);
+            }
+            
+            group.position.set(x, y, z);
+            scene.add(group);
+            return group;
+        }
+        
+        // Add berry clusters
+        createBerryCluster(3, 1, 2, 0xff5722);   // Orange berries
+        createBerryCluster(-2, 1, 3, 0x9c27b0);  // Purple berries
+        createBerryCluster(1, 1, -2, 0xffc107);  // Yellow berries
+        createBerryCluster(-5, 1, -1, 0x3f51b5); // Indigo berries
+        
+        // Create a flock of flying birds (in the yellow area)
+        function createBirds() {
+            const group = new THREE.Group();
+            
+            for (let i = 0; i < 15; i++) {
+                // Simple V shape for each bird
+                const birdGeometry = new THREE.BufferGeometry();
+                const vertices = new Float32Array([
+                    -0.2, 0, 0,
+                    0, 0, 0.2,
+                    0.2, 0, 0
+                ]);
+                
+                birdGeometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+                
+                const birdMaterial = new THREE.MeshBasicMaterial({ 
+                    color: 0x000000,
+                    side: THREE.DoubleSide
+                });
+                const bird = new THREE.Mesh(birdGeometry, birdMaterial);
+                
+                // Random position in the top-left quadrant with yellow light
+                bird.position.set(
+                    -5 - Math.random() * 5,
+                    5 + Math.random() * 3,
+                    -2 + Math.random() * 4
+                );
+                
+                // Random scale for variety
+                const scale = 0.3 + Math.random() * 0.3;
+                bird.scale.set(scale, scale, scale);
+                
+                group.add(bird);
+            }
+            
+            scene.add(group);
+            return group;
+        }
+        
+        const birds = createBirds();
+        
+        // Animation
+        const animatedObjects = [];
+        
+        // Make plants sway slightly
+        greenPlants.forEach(plant => {
+            animatedObjects.push({
+                obj: plant,
+                initialRotation: plant.rotation.z,
+                speed: 0.2 + Math.random() * 0.3,
+                amplitude: 0.03 + Math.random() * 0.05
+            });
+        });
+        
+        // Animate the red flower
+        animatedObjects.push({
+            obj: redFlower,
+            initialRotation: redFlower.rotation.y,
+            speed: 0.1,
+            amplitude: 0.05
+        });
+        
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+        
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            const time = Date.now() * 0.001;
+            
+            // Animate swaying objects
+            animatedObjects.forEach(item => {
+                item.obj.rotation.z = item.initialRotation + Math.sin(time * item.speed) * item.amplitude;
+            });
+            
+            // Rotate birds group slowly for a simple flock movement
+            birds.rotation.y = time * 0.2;
+            
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        
+        animate();
+    </script>
+</body>
+</html>
